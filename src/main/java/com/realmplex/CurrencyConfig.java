@@ -18,6 +18,20 @@ public class CurrencyConfig {
         public List<String> allowedPlayers = new ArrayList<>();
     }
 
+    public static class DenominationConfig {
+        public String name;
+        public String item;
+        @SerializedName(value = "displayName", alternate = "display_name")
+        public String displayName;
+        public String color;
+        public boolean glint;
+        @SerializedName(value = "itemModel", alternate = "item_model")
+        public String itemModel;
+        @SerializedName(value = "extraNbt", alternate = "extra_nbt")
+        public Map<String, Object> extraNbt;
+        public List<ExchangeConfig> exchanges = new ArrayList<>();
+    }
+
     public static class CurrencyItemConfig {
         @SerializedName(value = "nbtKey", alternate = "nbt_key")
         public String nbtKey;
@@ -31,6 +45,7 @@ public class CurrencyConfig {
         @SerializedName(value = "extraNbt", alternate = "extra_nbt")
         public Map<String, Object> extraNbt;
         public List<ExchangeConfig> exchanges = new ArrayList<>();
+        public List<DenominationConfig> denominations;
     }
 
     private static final RealmplexConfig<CurrencyConfig> HANDLER =

@@ -21,6 +21,7 @@ import net.minecraft.resources.Identifier;
 import net.minecraft.nbt.CompoundTag;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -29,6 +30,7 @@ public class CurrencyConverter {
     private record CurrencyItem(
             Item item,
             String nbtKey,
+            String denomination,
             String displayName,
             int color,
             boolean glint,
@@ -40,15 +42,19 @@ public class CurrencyConverter {
             CurrencyItem currency,
             Item rawItem,
             int rate,
-            List<String> allowedPlayers  // lower-cased; empty = OP only
+            List<String> allowedPlayers
     ) {
         boolean isMint() { return rawItem == null; }
     }
 
     private static final List<ExchangePair> PAIRS = new ArrayList<>();
 
+
+    private static final Map<String, String> DEFAULT_DENOMINATION = new HashMap<>();
+
     private static void loadPairs() {
         PAIRS.clear();
+        DEFAULT_DENOMINATION.clear();
         CurrencyConfig config = CurrencyConfig.load();
 
         for (CurrencyConfig.CurrencyItemConfig cfg : config.currencies) {
@@ -57,56 +63,98 @@ public class CurrencyConverter {
                 continue;
             }
 
-            Item currencyItem = BuiltInRegistries.ITEM.getValue(Identifier.parse(cfg.item));
-            if (currencyItem == Items.AIR) {
-                RealmplexMod.LOGGER.warn("Unknown currency item '{}' for '{}', skipping", cfg.item, cfg.nbtKey);
-                continue;
-            }
-
-            int color;
-            try {
-                color = Integer.parseInt(cfg.color.replace("#", ""), 16);
-            } catch (NumberFormatException e) {
-                RealmplexMod.LOGGER.warn("Invalid color '{}' for '{}', defaulting to white", cfg.color, cfg.nbtKey);
-                color = 0xFFFFFF;
-            }
-
-            CurrencyItem currency = new CurrencyItem(
-                    currencyItem,
-                    cfg.nbtKey,
-                    cfg.displayName,
-                    color,
-                    cfg.glint,
-                    cfg.itemModel,
-                    cfg.extraNbt != null ? cfg.extraNbt : Map.of()
-            );
-
-            for (CurrencyConfig.ExchangeConfig exchange : cfg.exchanges) {
-                if (exchange.rate <= 0) {
-                    RealmplexMod.LOGGER.warn("Exchange for '{}' has invalid rate {}, skipping", cfg.nbtKey, exchange.rate);
-                    continue;
-                }
-
-                Item rawItem = null;
-                if (exchange.rawItem != null && !exchange.rawItem.isBlank()) {
-                    rawItem = BuiltInRegistries.ITEM.getValue(Identifier.parse(exchange.rawItem));
-                    if (rawItem == Items.AIR) {
-                        RealmplexMod.LOGGER.warn("Unknown raw item '{}' for '{}', skipping", exchange.rawItem, cfg.nbtKey);
+            if (cfg.denominations != null && !cfg.denominations.isEmpty()) {
+                for (CurrencyConfig.DenominationConfig denom : cfg.denominations) {
+                    if (denom.name == null || denom.name.isBlank()) {
+                        RealmplexMod.LOGGER.warn("Denomination for '{}' is missing a name, skipping", cfg.nbtKey);
                         continue;
                     }
+
+                    CurrencyItem currency = buildCurrencyItem(
+                            cfg.nbtKey, denom.name, denom.item, denom.displayName,
+                            denom.color, denom.glint, denom.itemModel, denom.extraNbt
+                    );
+                    if (currency == null) continue;
+
+                    DEFAULT_DENOMINATION.putIfAbsent(cfg.nbtKey, denom.name);
+
+                    registerExchanges(cfg.nbtKey, currency, denom.exchanges);
                 }
+            } else {
+                CurrencyItem currency = buildCurrencyItem(
+                        cfg.nbtKey, "", cfg.item, cfg.displayName,
+                        cfg.color, cfg.glint, cfg.itemModel, cfg.extraNbt
+                );
+                if (currency == null) continue;
 
-                List<String> lowerNames = exchange.allowedPlayers == null
-                        ? List.of()
-                        : exchange.allowedPlayers.stream().map(String::toLowerCase).toList();
+                DEFAULT_DENOMINATION.putIfAbsent(cfg.nbtKey, "");
 
-                PAIRS.add(new ExchangePair(currency, rawItem, exchange.rate, lowerNames));
+                registerExchanges(cfg.nbtKey, currency, cfg.exchanges);
             }
         }
 
         long mints    = PAIRS.stream().filter(ExchangePair::isMint).count();
         long converts = PAIRS.size() - mints;
         RealmplexMod.LOGGER.info("Loaded {} conversion pair(s) and {} mint exchange(s)", converts, mints);
+    }
+
+    private static CurrencyItem buildCurrencyItem(String nbtKey, String denomination, String itemId, String displayName,
+                                                  String colorHex, boolean glint, String itemModel,
+                                                  Map<String, Object> extraNbt) {
+        Item currencyItem = BuiltInRegistries.ITEM.getValue(Identifier.parse(itemId));
+        if (currencyItem == Items.AIR) {
+            RealmplexMod.LOGGER.warn("Unknown currency item '{}' for '{}' (denomination '{}'), skipping",
+                    itemId, nbtKey, denomination);
+            return null;
+        }
+
+        int color;
+        try {
+            color = Integer.parseInt(colorHex.replace("#", ""), 16);
+        } catch (NumberFormatException e) {
+            RealmplexMod.LOGGER.warn("Invalid color '{}' for '{}' (denomination '{}'), defaulting to white",
+                    colorHex, nbtKey, denomination);
+            color = 0xFFFFFF;
+        }
+
+        return new CurrencyItem(
+                currencyItem,
+                nbtKey,
+                denomination,
+                displayName,
+                color,
+                glint,
+                itemModel,
+                extraNbt != null ? extraNbt : Map.of()
+        );
+    }
+
+    private static void registerExchanges(String nbtKey, CurrencyItem currency, List<CurrencyConfig.ExchangeConfig> exchanges) {
+        if (exchanges == null) return;
+
+        for (CurrencyConfig.ExchangeConfig exchange : exchanges) {
+            if (exchange.rate <= 0) {
+                RealmplexMod.LOGGER.warn("Exchange for '{}' (denomination '{}') has invalid rate {}, skipping",
+                        nbtKey, currency.denomination(), exchange.rate);
+                continue;
+            }
+
+            Item rawItem = null;
+            if (exchange.rawItem != null && !exchange.rawItem.isBlank()) {
+                rawItem = BuiltInRegistries.ITEM.getValue(Identifier.parse(exchange.rawItem));
+                if (rawItem == Items.AIR) {
+                    RealmplexMod.LOGGER.warn("Unknown raw item '{}' for '{}' (denomination '{}'), skipping",
+                            exchange.rawItem, nbtKey, currency.denomination());
+                    continue;
+                }
+            }
+
+            List<String> lowerNames = exchange.allowedPlayers == null
+                    ? List.of()
+                    : exchange.allowedPlayers.stream().map(String::toLowerCase).toList();
+
+            PAIRS.add(new ExchangePair(currency, rawItem, exchange.rate, lowerNames));
+        }
     }
 
     public static void register() {
@@ -131,6 +179,24 @@ public class CurrencyConverter {
                                     return builder.buildFuture();
                                 })
                                 .executes(CurrencyConverter::executeExchange)
+                                .then(Commands.argument("denomination", StringArgumentType.word())
+                                        .suggests((context, builder) -> {
+                                            String currencyKey;
+                                            try {
+                                                currencyKey = StringArgumentType.getString(context, "currency");
+                                            } catch (IllegalArgumentException e) {
+                                                return builder.buildFuture();
+                                            }
+                                            PAIRS.stream()
+                                                    .filter(p -> p.currency().nbtKey().equals(currencyKey))
+                                                    .map(p -> p.currency().denomination())
+                                                    .filter(d -> !d.isEmpty())
+                                                    .distinct()
+                                                    .forEach(builder::suggest);
+                                            return builder.buildFuture();
+                                        })
+                                        .executes(CurrencyConverter::executeExchange)
+                                )
                         )
                         .then(Commands.literal("reload")
                                 .executes(CurrencyConverter::executeReload)
@@ -160,10 +226,18 @@ public class CurrencyConverter {
             return 0;
         }
 
+        String denomination;
+        try {
+            denomination = StringArgumentType.getString(context, "denomination");
+        } catch (IllegalArgumentException e) {
+            denomination = DEFAULT_DENOMINATION.getOrDefault(currencyKey, "");
+        }
+
         ItemStack held = player.getMainHandItem();
 
         for (ExchangePair pair : PAIRS) {
             if (!pair.currency().nbtKey().equals(currencyKey)) continue;
+            if (!pair.currency().denomination().equals(denomination)) continue;
 
             if (pair.isMint()) {
                 if (!isPermitted(player, pair)) continue;
@@ -191,7 +265,8 @@ public class CurrencyConverter {
             }
         }
 
-        context.getSource().sendFailure(Component.literal("No valid exchange found for: " + currencyKey));
+        String label = denomination.isEmpty() ? currencyKey : (currencyKey + " " + denomination);
+        context.getSource().sendFailure(Component.literal("No valid exchange found for: " + label));
         return 0;
     }
 
