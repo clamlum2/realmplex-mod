@@ -42,14 +42,11 @@ public class CurrencyConverter {
             CurrencyItem currency,
             Item rawItem,
             int rate,
+            boolean useAll,
             List<String> allowedPlayers
-    ) {
-        boolean isMint() { return rawItem == null; }
-    }
+    ) {}
 
     private static final List<ExchangePair> PAIRS = new ArrayList<>();
-
-
     private static final Map<String, String> DEFAULT_DENOMINATION = new HashMap<>();
 
     private static void loadPairs() {
@@ -69,15 +66,12 @@ public class CurrencyConverter {
                         RealmplexMod.LOGGER.warn("Denomination for '{}' is missing a name, skipping", cfg.nbtKey);
                         continue;
                     }
-
                     CurrencyItem currency = buildCurrencyItem(
                             cfg.nbtKey, denom.name, denom.item, denom.displayName,
                             denom.color, denom.glint, denom.itemModel, denom.extraNbt
                     );
                     if (currency == null) continue;
-
                     DEFAULT_DENOMINATION.putIfAbsent(cfg.nbtKey, denom.name);
-
                     registerExchanges(cfg.nbtKey, currency, denom.exchanges);
                 }
             } else {
@@ -86,21 +80,17 @@ public class CurrencyConverter {
                         cfg.color, cfg.glint, cfg.itemModel, cfg.extraNbt
                 );
                 if (currency == null) continue;
-
                 DEFAULT_DENOMINATION.putIfAbsent(cfg.nbtKey, "");
-
                 registerExchanges(cfg.nbtKey, currency, cfg.exchanges);
             }
         }
 
-        long mints    = PAIRS.stream().filter(ExchangePair::isMint).count();
-        long converts = PAIRS.size() - mints;
-        RealmplexMod.LOGGER.info("Loaded {} conversion pair(s) and {} mint exchange(s)", converts, mints);
+        RealmplexMod.LOGGER.info("Loaded {} exchange pair(s)", PAIRS.size());
     }
 
-    private static CurrencyItem buildCurrencyItem(String nbtKey, String denomination, String itemId, String displayName,
-                                                  String colorHex, boolean glint, String itemModel,
-                                                  Map<String, Object> extraNbt) {
+    private static CurrencyItem buildCurrencyItem(String nbtKey, String denomination, String itemId,
+                                                  String displayName, String colorHex, boolean glint,
+                                                  String itemModel, Map<String, Object> extraNbt) {
         Item currencyItem = BuiltInRegistries.ITEM.getValue(Identifier.parse(itemId));
         if (currencyItem == Items.AIR) {
             RealmplexMod.LOGGER.warn("Unknown currency item '{}' for '{}' (denomination '{}'), skipping",
@@ -118,42 +108,39 @@ public class CurrencyConverter {
         }
 
         return new CurrencyItem(
-                currencyItem,
-                nbtKey,
-                denomination,
-                displayName,
-                color,
-                glint,
-                itemModel,
+                currencyItem, nbtKey, denomination, displayName, color, glint, itemModel,
                 extraNbt != null ? extraNbt : Map.of()
         );
     }
 
-    private static void registerExchanges(String nbtKey, CurrencyItem currency, List<CurrencyConfig.ExchangeConfig> exchanges) {
+    private static void registerExchanges(String nbtKey, CurrencyItem currency,
+                                          List<CurrencyConfig.ExchangeConfig> exchanges) {
         if (exchanges == null) return;
 
         for (CurrencyConfig.ExchangeConfig exchange : exchanges) {
+            if (exchange.rawItem == null || exchange.rawItem.isBlank()) {
+                RealmplexMod.LOGGER.warn("Exchange for '{}' (denomination '{}') is missing rawItem, skipping",
+                        nbtKey, currency.denomination());
+                continue;
+            }
             if (exchange.rate <= 0) {
                 RealmplexMod.LOGGER.warn("Exchange for '{}' (denomination '{}') has invalid rate {}, skipping",
                         nbtKey, currency.denomination(), exchange.rate);
                 continue;
             }
 
-            Item rawItem = null;
-            if (exchange.rawItem != null && !exchange.rawItem.isBlank()) {
-                rawItem = BuiltInRegistries.ITEM.getValue(Identifier.parse(exchange.rawItem));
-                if (rawItem == Items.AIR) {
-                    RealmplexMod.LOGGER.warn("Unknown raw item '{}' for '{}' (denomination '{}'), skipping",
-                            exchange.rawItem, nbtKey, currency.denomination());
-                    continue;
-                }
+            Item rawItem = BuiltInRegistries.ITEM.getValue(Identifier.parse(exchange.rawItem));
+            if (rawItem == Items.AIR) {
+                RealmplexMod.LOGGER.warn("Unknown raw item '{}' for '{}' (denomination '{}'), skipping",
+                        exchange.rawItem, nbtKey, currency.denomination());
+                continue;
             }
 
             List<String> lowerNames = exchange.allowedPlayers == null
                     ? List.of()
                     : exchange.allowedPlayers.stream().map(String::toLowerCase).toList();
 
-            PAIRS.add(new ExchangePair(currency, rawItem, exchange.rate, lowerNames));
+            PAIRS.add(new ExchangePair(currency, rawItem, exchange.rate, exchange.useAll, lowerNames));
         }
     }
 
@@ -239,18 +226,15 @@ public class CurrencyConverter {
             if (!pair.currency().nbtKey().equals(currencyKey)) continue;
             if (!pair.currency().denomination().equals(denomination)) continue;
 
-            if (pair.isMint()) {
-                if (!isPermitted(player, pair)) continue;
-                return mint(player, pair);
-            }
-
             // raw → currency
             if (held.is(pair.rawItem()) && held.getCount() >= 1) {
                 if (!isPermitted(player, pair)) {
                     context.getSource().sendFailure(Component.literal("You don't have permission for that exchange."));
                     return 0;
                 }
-                return convert(player, held, 1, buildCurrency(pair), pair.rate());
+                int rawCost      = pair.useAll() ? held.getCount() : 1;
+                int currencyYield = rawCost * pair.rate();
+                return convert(player, held, rawCost, buildCurrency(pair, currencyYield), currencyYield);
             }
 
             // currency → raw
@@ -261,7 +245,19 @@ public class CurrencyConverter {
                     context.getSource().sendFailure(Component.literal("You don't have permission for that exchange."));
                     return 0;
                 }
-                return convert(player, held, pair.rate(), new ItemStack(pair.rawItem(), 1), 1);
+                int rawYield, currencyCost;
+                if (pair.useAll()) {
+                    rawYield     = held.getCount() / pair.rate();
+                    currencyCost = rawYield * pair.rate();
+                } else {
+                    rawYield     = 1;
+                    currencyCost = pair.rate();
+                }
+                if (rawYield <= 0) {
+                    context.getSource().sendFailure(Component.literal("Not enough to exchange."));
+                    return 0;
+                }
+                return convert(player, held, currencyCost, new ItemStack(pair.rawItem(), rawYield), rawYield);
             }
         }
 
@@ -273,18 +269,6 @@ public class CurrencyConverter {
     private static boolean isPermitted(ServerPlayer player, ExchangePair pair) {
         if (player.createCommandSourceStack().permissions().hasPermission(Permissions.COMMANDS_GAMEMASTER)) return true;
         return pair.allowedPlayers().contains(player.getName().getString().toLowerCase());
-    }
-
-    private static int mint(ServerPlayer player, ExchangePair pair) {
-        ItemStack output = buildCurrency(pair);
-        Component outputComponent = itemComponent(output);
-        player.addItem(output);
-        player.sendSystemMessage(
-                Component.literal("Minted ")
-                        .append(Component.literal(pair.rate() + "x "))
-                        .append(outputComponent)
-        );
-        return 1;
     }
 
     private static int convert(ServerPlayer player, ItemStack held, int cost, ItemStack output, int yield) {
@@ -312,18 +296,18 @@ public class CurrencyConverter {
         );
     }
 
-    private static ItemStack buildCurrency(ExchangePair pair) {
+    private static ItemStack buildCurrency(ExchangePair pair, int count) {
         CurrencyItem currency = pair.currency();
-        ItemStack output = new ItemStack(currency.item(), pair.rate());
+        ItemStack output = new ItemStack(currency.item(), count);
 
         CompoundTag tag = new CompoundTag();
         tag.putBoolean(currency.nbtKey(), true);
 
         for (Map.Entry<String, Object> entry : currency.extraNbt().entrySet()) {
-            if      (entry.getValue() instanceof Boolean b)  tag.putBoolean(entry.getKey(), b);
-            else if (entry.getValue() instanceof Integer i)  tag.putInt(entry.getKey(), i);
-            else if (entry.getValue() instanceof String s)   tag.putString(entry.getKey(), s);
-            else if (entry.getValue() instanceof Float f)    tag.putFloat(entry.getKey(), f);
+            if      (entry.getValue() instanceof Boolean b) tag.putBoolean(entry.getKey(), b);
+            else if (entry.getValue() instanceof Integer i) tag.putInt(entry.getKey(), i);
+            else if (entry.getValue() instanceof String s)  tag.putString(entry.getKey(), s);
+            else if (entry.getValue() instanceof Float f)   tag.putFloat(entry.getKey(), f);
         }
 
         output.set(DataComponents.CUSTOM_DATA, CustomData.of(tag));
