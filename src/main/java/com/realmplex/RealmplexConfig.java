@@ -1,7 +1,7 @@
 package com.realmplex;
 
-import com.google.gson.GsonBuilder;
 import com.google.gson.Gson;
+import com.google.gson.GsonBuilder;
 import net.fabricmc.loader.api.FabricLoader;
 
 import java.io.File;
@@ -10,66 +10,59 @@ import java.io.PrintWriter;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.Scanner;
 
 import static com.google.gson.FieldNamingPolicy.LOWER_CASE_WITH_UNDERSCORES;
 
-public class RealmplexConfig {
-    private final GsonBuilder builder = new GsonBuilder();
-    private final Gson gson = builder
-        .setPrettyPrinting()
-        .setFieldNamingPolicy(LOWER_CASE_WITH_UNDERSCORES)
-        .create();
+public class RealmplexConfig<T> {
+    private static final Gson GSON = new GsonBuilder()
+            .setPrettyPrinting()
+            .setFieldNamingPolicy(LOWER_CASE_WITH_UNDERSCORES)
+            .create();
+
+    private final String fileName;
+    private final T defaults;
+    private final Class<T> configClass;
 
     private File configFile;
 
-    public static class Config {
-        public String apiKey;
-        public String apiUrl;
-
-        private Config(String apiKey, String apiUrl) {
-            this.apiKey = apiKey;
-            this.apiUrl = apiUrl;
-        }
+    public RealmplexConfig(String fileName, T defaults, Class<T> configClass) {
+        this.fileName = fileName;
+        this.defaults = defaults;
+        this.configClass = configClass;
     }
 
-    public Config loadConfig() {
-        Path path = FabricLoader.getInstance().getConfigDir();
-        StringBuilder json = new StringBuilder();
-
-        this.configFile = path.resolve("realmplex-mod.json").toFile();
+    public T load() {
+        Path configDir = FabricLoader.getInstance().getConfigDir();
+        configFile = configDir.resolve(fileName).toFile();
 
         if (!configFile.exists()) {
             try {
-                createConfig();
+                createWithDefaults();
             } catch (IOException e) {
-                RealmplexMod.LOGGER.error("Failed to create config!", e);
+                RealmplexMod.LOGGER.error("Failed to create config '{}', using defaults", fileName, e);
+                return defaults;
             }
         }
 
         try {
-            Scanner scanner = new Scanner(configFile);
-            while (scanner.hasNextLine()) {
-                json.append(scanner.nextLine());
-            }
-
-            scanner.close();
-        } catch (java.io.FileNotFoundException e) {
-            RealmplexMod.LOGGER.error("Failed to load config!", e);
+            String json = Files.readString(configFile.toPath(), StandardCharsets.UTF_8);
+            T loaded = GSON.fromJson(json, configClass);
+            RealmplexMod.LOGGER.debug("Loaded config '{}'", fileName);
+            return loaded;
+        } catch (IOException e) {
+            RealmplexMod.LOGGER.error("Failed to read config '{}', using defaults", fileName, e);
+            return defaults;
         }
-
-        RealmplexMod.LOGGER.debug("Loaded config");
-        return gson.fromJson(json.toString(), Config.class);
     }
 
-    private void createConfig() throws IOException {
-        if (configFile.getParentFile().mkdirs()) RealmplexMod.LOGGER.debug("Created config directory");
-        Files.createFile(configFile.toPath());
 
-        // TODO write default config
-        Config defaultConfig = new Config("", "http://127.0.0.1");
-        PrintWriter writer = new PrintWriter(configFile, StandardCharsets.UTF_8);
-        writer.write(gson.toJson(defaultConfig));
-        writer.close();
+    private void createWithDefaults() throws IOException {
+        if (configFile.getParentFile().mkdirs()) {
+            RealmplexMod.LOGGER.debug("Created config directory");
+        }
+        Files.createFile(configFile.toPath());
+        try (PrintWriter writer = new PrintWriter(configFile, StandardCharsets.UTF_8)) {
+            writer.write(GSON.toJson(defaults));
+        }
     }
 }
