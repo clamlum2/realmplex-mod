@@ -14,6 +14,7 @@ public class CurrencyConfig {
         @SerializedName(value = "allowedPlayers", alternate = "allowed_players")
         public List<String> allowedPlayers = new ArrayList<>();
     }
+
     public static class DenominationConfig {
         public String name;
         public String item;
@@ -25,8 +26,10 @@ public class CurrencyConfig {
         public String itemModel;
         @SerializedName(value = "extraNbt", alternate = "extra_nbt")
         public Map<String, Object> extraNbt;
+        public List<Object> lore = new ArrayList<>();
         public List<ExchangeConfig> exchanges = new ArrayList<>();
     }
+
     public static class CurrencyItemConfig {
         @SerializedName(value = "nbtKey", alternate = "nbt_key")
         public String nbtKey;
@@ -39,9 +42,11 @@ public class CurrencyConfig {
         public String itemModel;
         @SerializedName(value = "extraNbt", alternate = "extra_nbt")
         public Map<String, Object> extraNbt;
+        public List<Object> lore = new ArrayList<>();
         public List<ExchangeConfig> exchanges = new ArrayList<>();
         public List<DenominationConfig> denominations;
     }
+
     private static final RealmplexConfig<CurrencyConfig> HANDLER =
             new RealmplexConfig<>("realmplex/currencies.json", defaultConfig(), CurrencyConfig.class);
     public static CurrencyConfig load() {
@@ -57,6 +62,10 @@ public class CurrencyConfig {
         usd.glint       = true;
         usd.itemModel   = "minecraft:filled_map";
         usd.extraNbt    = Map.of("usd", true);
+        usd.lore = List.of(
+                "&7Official currency of the USA",
+                "&7Worth &a64 Netherite Ingots"
+        );
         usd.exchanges.add(exchange("minecraft:netherite_ingot", 64, false, List.of()));
         usd.exchanges.add(exchange("minecraft:netherite_scrap", 16, false, List.of()));
         config.currencies.add(usd);

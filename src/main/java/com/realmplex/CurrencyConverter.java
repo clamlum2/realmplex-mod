@@ -8,8 +8,7 @@ import net.minecraft.commands.CommandSourceStack;
 import net.minecraft.commands.Commands;
 import net.minecraft.core.component.DataComponents;
 import net.minecraft.core.registries.BuiltInRegistries;
-import net.minecraft.network.chat.Component;
-import net.minecraft.network.chat.HoverEvent;
+import net.minecraft.network.chat.*;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.server.permissions.Permissions;
 import net.minecraft.world.item.Item;
@@ -19,6 +18,7 @@ import net.minecraft.world.item.Items;
 import net.minecraft.world.item.component.CustomData;
 import net.minecraft.resources.Identifier;
 import net.minecraft.nbt.CompoundTag;
+import net.minecraft.world.item.component.ItemLore;
 
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -35,7 +35,8 @@ public class CurrencyConverter {
             int color,
             boolean glint,
             String itemModel,
-            Map<String, Object> extraNbt
+            Map<String, Object> extraNbt,
+            List<Object> lore
     ) {}
 
     private record ExchangePair(
@@ -68,7 +69,7 @@ public class CurrencyConverter {
                     }
                     CurrencyItem currency = buildCurrencyItem(
                             cfg.nbtKey, denom.name, denom.item, denom.displayName,
-                            denom.color, denom.glint, denom.itemModel, denom.extraNbt
+                            denom.color, denom.glint, denom.itemModel, denom.extraNbt, denom.lore
                     );
                     if (currency == null) continue;
                     DEFAULT_DENOMINATION.putIfAbsent(cfg.nbtKey, denom.name);
@@ -77,7 +78,7 @@ public class CurrencyConverter {
             } else {
                 CurrencyItem currency = buildCurrencyItem(
                         cfg.nbtKey, "", cfg.item, cfg.displayName,
-                        cfg.color, cfg.glint, cfg.itemModel, cfg.extraNbt
+                        cfg.color, cfg.glint, cfg.itemModel, cfg.extraNbt, cfg.lore
                 );
                 if (currency == null) continue;
                 DEFAULT_DENOMINATION.putIfAbsent(cfg.nbtKey, "");
@@ -88,9 +89,9 @@ public class CurrencyConverter {
         RealmplexMod.LOGGER.info("Loaded {} exchange pair(s)", PAIRS.size());
     }
 
-    private static CurrencyItem buildCurrencyItem(String nbtKey, String denomination, String itemId,
-                                                  String displayName, String colorHex, boolean glint,
-                                                  String itemModel, Map<String, Object> extraNbt) {
+    private static CurrencyItem buildCurrencyItem(String nbtKey, String denomination, String itemId, String displayName,
+                                                  String colorHex, boolean glint, String itemModel,
+                                                  Map<String, Object> extraNbt, List<Object> lore) {
         Item currencyItem = BuiltInRegistries.ITEM.getValue(Identifier.parse(itemId));
         if (currencyItem == Items.AIR) {
             RealmplexMod.LOGGER.warn("Unknown currency item '{}' for '{}' (denomination '{}'), skipping",
@@ -108,8 +109,15 @@ public class CurrencyConverter {
         }
 
         return new CurrencyItem(
-                currencyItem, nbtKey, denomination, displayName, color, glint, itemModel,
-                extraNbt != null ? extraNbt : Map.of()
+                currencyItem,
+                nbtKey,
+                denomination,
+                displayName,
+                color,
+                glint,
+                itemModel,
+                extraNbt != null ? extraNbt : Map.of(),
+                lore != null ? lore : List.of()
         );
     }
 
@@ -324,7 +332,99 @@ public class CurrencyConverter {
         if (currency.itemModel() != null) {
             output.set(DataComponents.ITEM_MODEL, Identifier.parse(currency.itemModel()));
         }
-
+        if (!currency.lore().isEmpty()) {
+            List<Component> loreLines = currency.lore().stream()
+                    .map(CurrencyConverter::parseLoreEntry)
+                    .toList();
+            output.set(DataComponents.LORE, new ItemLore(loreLines));
+        }
         return output;
+    }
+
+    private static final Style DEFAULT_LORE_STYLE = Style.EMPTY.withColor(ChatFormatting.GRAY).withItalic(true);
+
+    private static Component parseLoreEntry(Object entry) {
+        if (entry instanceof String s) {
+            return parseLoreLine(s);
+        }
+        if (entry instanceof Map<?, ?> map) {
+            return parseLoreComponent(map, DEFAULT_LORE_STYLE);
+        }
+        RealmplexMod.LOGGER.warn("Unsupported lore entry '{}', skipping", entry);
+        return Component.empty();
+    }
+
+    private static Component parseLoreComponent(Map<?, ?> map, Style inheritedStyle) {
+        Object textValue = map.get("text");
+        String text = textValue != null ? textValue.toString() : "";
+
+        Style style = inheritedStyle;
+
+        Object colorValue = map.get("color");
+        if (colorValue != null) {
+            TextColor parsed = TextColor.parseColor(colorValue.toString()).result().orElse(null);
+
+            if (parsed != null) {
+                style = style.withColor(parsed);
+            } else {
+                RealmplexMod.LOGGER.warn("Invalid lore color '{}', ignoring", colorValue);
+            }
+        }
+
+        if (map.get("bold") != null) style = style.withBold(toBoolean(map.get("bold")));
+        if (map.get("italic") != null) style = style.withItalic(toBoolean(map.get("italic")));
+        if (map.get("underlined") != null) style = style.withUnderlined(toBoolean(map.get("underlined")));
+        if (map.get("strikethrough") != null) style = style.withStrikethrough(toBoolean(map.get("strikethrough")));
+        if (map.get("obfuscated") != null) style = style.withObfuscated(toBoolean(map.get("obfuscated")));
+
+        MutableComponent component = Component.literal(text).withStyle(style);
+
+        Object extra = map.get("extra");
+        if (extra instanceof List<?> children) {
+            for (Object child : children) {
+                if (child instanceof Map<?, ?> childMap) {
+                    component.append(parseLoreComponent(childMap, style));
+                } else if (child instanceof String s) {
+                    component.append(parseLoreLine(s));
+                }
+            }
+        }
+
+        return component;
+    }
+
+    private static boolean toBoolean(Object value) {
+        if (value instanceof Boolean b) return b;
+        if (value instanceof Number n) return n.intValue() != 0;
+        return Boolean.parseBoolean(value.toString());
+    }
+
+    private static Component parseLoreLine(String raw) {
+        MutableComponent result = Component.empty();
+        Style currentStyle = DEFAULT_LORE_STYLE;
+        StringBuilder buffer = new StringBuilder();
+
+        int i = 0;
+        while (i < raw.length()) {
+            char c = raw.charAt(i);
+            if (c == '&' && i + 1 < raw.length()) {
+                ChatFormatting formatting = ChatFormatting.getByCode(raw.charAt(i + 1));
+                if (formatting != null) {
+                    if (!buffer.isEmpty()) {
+                        result.append(Component.literal(buffer.toString()).withStyle(currentStyle));
+                        buffer.setLength(0);
+                    }
+                    currentStyle = (formatting == ChatFormatting.RESET)
+                            ? DEFAULT_LORE_STYLE
+                            : currentStyle.applyFormat(formatting);
+                    i += 2;
+                    continue;
+                }
+            }
+            buffer.append(c);
+            i++;
+        }
+        result.append(Component.literal(buffer.toString()).withStyle(currentStyle));
+        return result;
     }
 }
