@@ -17,5 +17,6 @@ public class RealmplexMod implements ModInitializer {
         LOGGER.info("Loaded Realmplex Mod");
         CurrencyConverter.register();
         ItemFlexer.register();
+        PingCommand.register();
     }
 }
