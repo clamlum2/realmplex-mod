@@ -49,6 +49,11 @@ dependencies {
     implementation "carpet:fabric-carpet:${project.carpet_version}"
 
     implementation("me.senseiwells:puppet-players:${project.puppetplayers_version}")
+
+    implementation "net.casualchampionships:arcade-commands:0.10.0-beta.2+26.2"
+    implementation "net.casualchampionships:arcade-extensions:0.10.0-beta.2+26.2"
+    implementation "net.casualchampionships:arcade-npcs:0.10.0-beta.2+26.2"
+    implementation "net.casualchampionships:arcade-scheduler:0.10.0-beta.2+26.2"
 }
 
 processResources {
