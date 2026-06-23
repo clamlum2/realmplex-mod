@@ -10,7 +10,7 @@
 	],
 	"contact": {
 		"homepage": "https://realmplex.com",
-		"sources": "https://github.com/clamlum2/realmplex-mod"
+		"sources": "https://github.com/realmplex-server/realmplex-mod"
 	},
 	"license": "GPL-3.0",
 	"icon": "assets/realmplex-mod/icon.png",
