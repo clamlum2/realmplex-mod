@@ -2,6 +2,7 @@ package com.realmplex;
 
 import net.fabricmc.api.ModInitializer;
 
+import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -18,5 +19,11 @@ public class RealmplexMod implements ModInitializer {
         CurrencyConverter.register();
         ItemFlexer.register();
         PingCommand.register();
+
+        ServerLifecycleEvents.END_DATA_PACK_RELOAD.register((server, resourceManager, success) -> {
+            if (success) {
+                CurrencyConverter.loadPairs();
+            }
+        });
     }
 }

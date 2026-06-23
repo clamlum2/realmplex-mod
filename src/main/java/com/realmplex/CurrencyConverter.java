@@ -50,7 +50,7 @@ public class CurrencyConverter {
     private static final List<ExchangePair> PAIRS = new ArrayList<>();
     private static final Map<String, String> DEFAULT_DENOMINATION = new HashMap<>();
 
-    private static void loadPairs() {
+    public static void loadPairs() {
         PAIRS.clear();
         DEFAULT_DENOMINATION.clear();
         CurrencyConfig config = CurrencyConfig.load();
