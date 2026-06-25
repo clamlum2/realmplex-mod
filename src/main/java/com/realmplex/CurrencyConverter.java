@@ -39,7 +39,7 @@ public class CurrencyConverter {
             List<Object> lore
     ) {}
 
-    private record ExchangePair(
+    public record ExchangePair(
             CurrencyItem currency,
             Item rawItem,
             int rate,
@@ -156,18 +156,12 @@ public class CurrencyConverter {
         loadPairs();
         CommandRegistrationCallback.EVENT.register((dispatcher, registryAccess, environment) ->
                 dispatcher.register(Commands.<CommandSourceStack>literal("exchange")
+                        .requires(CurrencyConverter::canUseExchange)   // <-- clean one-liner
                         .executes(CurrencyConverter::executeExchange)
-                        .requires(source -> {
-                            if (source.getEntity() == null) return true;
-                            if (source.permissions().hasPermission(Permissions.COMMANDS_GAMEMASTER)) return true;
-                            ServerPlayer player = source.getPlayer();
-                            if (player == null) return false;
-                            String name = player.getName().getString().toLowerCase();
-                            return PAIRS.stream().anyMatch(p -> p.allowedPlayers().contains(name));
-                        })
                         .then(Commands.argument("currency", StringArgumentType.word())
                                 .suggests((context, builder) -> {
-                                    PAIRS.stream()
+                                    getAllowedPairs(context.getSource())  // respect per-player visibility
+                                            .stream()
                                             .map(p -> p.currency().nbtKey())
                                             .distinct()
                                             .forEach(builder::suggest);
@@ -182,7 +176,8 @@ public class CurrencyConverter {
                                             } catch (IllegalArgumentException e) {
                                                 return builder.buildFuture();
                                             }
-                                            PAIRS.stream()
+                                            getAllowedPairs(context.getSource())  // same filter
+                                                    .stream()
                                                     .filter(p -> p.currency().nbtKey().equals(currencyKey))
                                                     .map(p -> p.currency().denomination())
                                                     .filter(d -> !d.isEmpty())
@@ -194,10 +189,35 @@ public class CurrencyConverter {
                                 )
                         )
                         .then(Commands.literal("reload")
+                                .requires(src -> src.permissions().hasPermission(Permissions.COMMANDS_GAMEMASTER))
                                 .executes(CurrencyConverter::executeReload)
                         )
                 )
         );
+    }
+
+
+    private static boolean canUseExchange(CommandSourceStack source) {
+        if (source.getEntity() == null) return true;
+
+        ServerPlayer player = source.getPlayer();
+        if (player == null) return true;
+
+        if (source.permissions().hasPermission(Permissions.COMMANDS_GAMEMASTER)) return true;
+
+        String name = player.getName().getString().toLowerCase();
+        return PAIRS.stream().anyMatch(p -> p.allowedPlayers().contains(name));
+    }
+
+    public static List<ExchangePair> getAllowedPairs(CommandSourceStack source) {
+        ServerPlayer player = source.getPlayer();
+        if (player == null) return PAIRS;
+        if (source.permissions().hasPermission(Permissions.COMMANDS_GAMEMASTER)) return PAIRS;
+
+        String name = player.getName().getString().toLowerCase();
+        return PAIRS.stream()
+                .filter(p -> p.allowedPlayers().contains(name))
+                .toList();
     }
 
     private static int executeReload(CommandContext<CommandSourceStack> context) {
@@ -236,10 +256,6 @@ public class CurrencyConverter {
 
             // raw → currency
             if (held.is(pair.rawItem()) && held.getCount() >= 1) {
-                if (!isPermitted(player, pair)) {
-                    context.getSource().sendFailure(Component.literal("You don't have permission for that exchange."));
-                    return 0;
-                }
                 int rawCost      = pair.useAll() ? held.getCount() : 1;
                 int currencyYield = rawCost * pair.rate();
                 return convert(player, held, rawCost, buildCurrency(pair, currencyYield), currencyYield);
@@ -249,10 +265,6 @@ public class CurrencyConverter {
             if (held.is(pair.currency().item()) && held.getCount() >= pair.rate()) {
                 CustomData heldData = held.get(DataComponents.CUSTOM_DATA);
                 if (heldData == null || !heldData.copyTag().contains(pair.currency().nbtKey())) continue;
-                if (!isPermitted(player, pair)) {
-                    context.getSource().sendFailure(Component.literal("You don't have permission for that exchange."));
-                    return 0;
-                }
                 int rawYield, currencyCost;
                 if (pair.useAll()) {
                     rawYield     = held.getCount() / pair.rate();
@@ -272,11 +284,6 @@ public class CurrencyConverter {
         String label = denomination.isEmpty() ? currencyKey : (currencyKey + " " + denomination);
         context.getSource().sendFailure(Component.literal("No valid exchange found for: " + label));
         return 0;
-    }
-
-    private static boolean isPermitted(ServerPlayer player, ExchangePair pair) {
-        if (player.createCommandSourceStack().permissions().hasPermission(Permissions.COMMANDS_GAMEMASTER)) return true;
-        return pair.allowedPlayers().contains(player.getName().getString().toLowerCase());
     }
 
     private static int convert(ServerPlayer player, ItemStack held, int cost, ItemStack output, int yield) {
