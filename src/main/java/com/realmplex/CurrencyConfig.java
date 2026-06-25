@@ -63,8 +63,7 @@ public class CurrencyConfig {
         usd.itemModel   = "minecraft:filled_map";
         usd.extraNbt    = Map.of("usd", true);
         usd.lore = List.of(
-                "&7Official currency of the USA",
-                "&7Worth &a64 Netherite Ingots"
+                "&7Official currency of the USA"
         );
         usd.exchanges.add(exchange("minecraft:netherite_ingot", 64, false, List.of()));
         usd.exchanges.add(exchange("minecraft:netherite_scrap", 16, false, List.of()));
